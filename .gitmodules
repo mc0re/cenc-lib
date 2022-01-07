@@ -1,0 +1,3 @@
+[submodule "piff-library"]
+	path = PiffLibrary
+	url = git@github.com:mc0re/piff-library.git
