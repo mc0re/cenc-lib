@@ -18,6 +18,7 @@ public class CencDecryptor
         if (tracks.Length == 0)
             throw new ArgumentException("No tracks in the file.");
 
+        var decryptors = new List<CencTrackDecryptor>();
         var cursors = new List<SampleCursor>();
 
         foreach (var track in tracks)
@@ -28,10 +29,16 @@ public class CencDecryptor
             var stsd = stbl.First<PiffSampleDescriptionBox>();
             if (stsd == null) continue;
 
-            foreach (var sample in stsd.OfType<PiffSampleEntryBoxBase>())
-            {
-                var decr = new CencTrackDecryptor(sample);
-            }
+            var samples = stsd.OfType<PiffSampleEntryBoxBase>();
+            if (!samples.Any()) continue;
+
+            var trackId = track.First<PiffTrackHeaderBox>().TrackId;
+            // Multiple keys: use trackId or stsd.First<PiffTrackEncryptionBox>().DefaultKeyId
+            var trackKey = key;
+
+            var decr = new CencTrackDecryptor(samples, trackId, trackKey);
+            decryptors.Add(decr);
+            cursors.Add(new SampleCursor(trackId, stbl, input));
         }
         var c = cursors.ToArray();
 
@@ -39,27 +46,25 @@ public class CencDecryptor
     }
 }
 
-internal class CencTrackDecryptor
-{
-    public CencTrackDecryptor(PiffSampleEntryBoxBase sample)
-    {
-        var sinf = sample.First<PiffProtectionSchemeInformationBox>();
-        var frma = sinf.First<PiffOriginalFormatBox>();
-        var schi = sinf.First<PiffSchemeInformationBox>();
-        var schm = sinf.First<PiffSchemeTypeBox>();
-
-        // Original format:
-        // - avc1, avc2, avc3, avc4, dvav, dva1 - avcC
-        // - hvc1, hev1, dvhe, dvh1 - HEVC
-        // - mp4v - MPEG Video
-        if (schm != null)
-        {
-            var avcc = sinf.First<PiffAvcConfigurationBox>();
-        }
-    }
-}
-
 internal class SampleCursor
 {
+    private uint mTrackId;
+    private PiffSampleTableBox mStbl;
+    private int mSampleIndex;
+    private int mChunkIndex;
+    private Stream mInput;
+    private uint mSampleCount;
+    private bool mEndReached;
 
+
+    public SampleCursor(uint trackId, PiffSampleTableBox stbl, Stream input)
+    {
+        mTrackId = trackId;
+        mStbl = stbl;
+        mInput = input;
+
+        mSampleCount = stbl.First<PiffSampleSizeBox>()?.SampleCount ?? stbl.First<PiffCompactSampleSizeBox>()?.SampleCount ?? 0;
+        if (mSampleCount > 0)
+            mEndReached = true;
+    }
 }
