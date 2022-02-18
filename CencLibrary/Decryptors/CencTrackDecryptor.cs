@@ -28,6 +28,8 @@ internal sealed class CencTrackDecryptor
 
     public uint TrackId { get; }
 
+    public byte[] TrackKey { get; }
+
     public string OriginalFormat { get; }
 
     #endregion
@@ -46,11 +48,11 @@ internal sealed class CencTrackDecryptor
 
         foreach (var sample in samples)
         {
-            var sinf = sample.First<PiffProtectionSchemeInformationBox>();
-            originalFormat = sinf.First<PiffOriginalFormatBox>()?.Format ?? originalFormat;
+            var sinf = sample.FirstOfType<PiffProtectionSchemeInformationBox>();
+            originalFormat = sinf.FirstOfType<PiffOriginalFormatBox>()?.Format ?? originalFormat;
 
-            var schi = sinf.First<PiffSchemeInformationBox>();
-            var schm = sinf.First<PiffSchemeTypeBox>();
+            var schi = sinf.FirstOfType<PiffSchemeInformationBox>();
+            var schm = sinf.FirstOfType<PiffSchemeTypeBox>();
             var psd = sample switch
             {
                 PiffVideoSampleEntryBox v => CreateVideoDescription(schm, originalFormat, v, schi),
@@ -65,7 +67,35 @@ internal sealed class CencTrackDecryptor
         }
 
         TrackId = trackId;
+        TrackKey = trackKey;
         OriginalFormat = originalFormat;
+    }
+
+    #endregion
+
+
+    #region API
+    
+    /// <summary>
+    /// Change the format to the original format, hide the protection information.
+    /// </summary>
+    public void ChangeFormat()
+    {
+        foreach (var info in mInfos)
+        {
+            info.Box.BoxType = OriginalFormat;
+            info.Box.Children.OfType<PiffProtectionSchemeInformationBox>().First().BoxType = "skip";
+        }
+    }
+
+
+    /// <summary>
+    /// 1-based
+    /// </summary>
+    public ProtectedSampleDescription? GetSampleDescription(uint index)
+    {
+        if (index < 1 || index > mInfos.Count) return null;
+        return mInfos[(int)index - 1].Description;
     }
 
     #endregion
@@ -89,7 +119,7 @@ internal sealed class CencTrackDecryptor
                 case "avc4":
                 case "dvav":
                 case "dva1":
-                    var avcc = sample.First<PiffAvcConfigurationBox>();
+                    var avcc = sample.FirstOfType<PiffAvcConfigurationBox>();
                     var sd = new AvcSampleDescription(
                         originalFormat, sample.Width, sample.Height, sample.Depth, sample.CompressorName, avcc);
                     return new ProtectedSampleDescription(
@@ -114,7 +144,7 @@ internal sealed class CencTrackDecryptor
             switch (originalFormat)
             {
                 case "mp4a":
-                    var esds = sample.First<PiffElementaryStreamDescriptionMp4aBox>();
+                    var esds = sample.FirstOfType<PiffElementaryStreamDescriptionBox>();
                     var sd = new Mpeg4AudioSampleDescription(
                         originalFormat, sample.SampleRate >> 16, sample.SampleSize, sample.ChannelCount, esds);
                     return new ProtectedSampleDescription(
@@ -131,26 +161,4 @@ internal sealed class CencTrackDecryptor
     }
 
     #endregion
-}
-
-internal class Mpeg4AudioSampleDescription : SampleDescription
-{
-    private string mFormat;
-    private uint mSampleRate;
-    private ushort mSampleSize;
-    private ushort mChannelCount;
-    private PiffElementaryStreamDescriptionMp4aBox mEsdsBox;
-
-
-    public Mpeg4AudioSampleDescription(
-        string format, uint sampleRate, ushort sampleSize, ushort channelCount,
-        PiffElementaryStreamDescriptionMp4aBox esds) :
-        base(SampleDescriptionTypes.Mpeg, format)
-    {
-        mFormat = format;
-        mSampleRate = sampleRate;
-        mSampleSize = sampleSize;
-        mChannelCount = channelCount;
-        mEsdsBox = esds;
-    }
 }

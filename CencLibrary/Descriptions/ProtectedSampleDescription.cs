@@ -2,6 +2,7 @@
 
 namespace CencLibrary;
 
+
 internal sealed class ProtectedSampleDescription : SampleDescription
 {
     #region Properties
