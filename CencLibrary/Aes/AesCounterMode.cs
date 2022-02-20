@@ -9,56 +9,62 @@ namespace CencLibrary;
 /// </summary>
 public class AesCounterMode : SymmetricAlgorithm
 {
-    private readonly ulong mNonce;
-    private readonly ulong mCounter;
+    #region Fields
+
+    private readonly byte[] mCounter;
+
     private readonly Aes mAes;
 
-    public AesCounterMode(byte[] nonce, ulong counter)
-        : this(ConvertNonce(nonce), counter)
-    {
-    }
+    #endregion
 
 
-    public AesCounterMode(ulong nonce, ulong counter)
+    #region Init and clean-up
+
+    /// <summary>
+    /// Create an AES transformer.
+    /// </summary>
+    /// <param name="counter">A counter, gets modified during the transformation process</param>
+    public AesCounterMode(byte[] counter)
     {
         mAes = Aes.Create();
         mAes.Mode = CipherMode.ECB;
         mAes.Padding = PaddingMode.None;
 
-        mNonce = nonce;
         mCounter = counter;
     }
 
+    #endregion
 
-    private static ulong ConvertNonce(byte[] nonce)
+
+    #region Overrides
+
+    /// <inheritdoc/>
+    public override ICryptoTransform CreateEncryptor(byte[] key, byte[]? iv)
     {
-        if (nonce == null) throw new ArgumentNullException(nameof(nonce));
-        if (nonce.Length < sizeof(ulong)) throw new ArgumentException($"{nameof(nonce)} must have at least {sizeof(ulong)} bytes");
-
-        return BitConverter.ToUInt64(nonce);
+        return new AesCounterModeCryptoTransform(mAes, key, iv, mCounter);
     }
 
 
-    public override ICryptoTransform CreateEncryptor(byte[] rgbKey, byte[]? iv)
+
+    /// <inheritdoc/>
+    public override ICryptoTransform CreateDecryptor(byte[] key, byte[]? iv)
     {
-        return new CounterModeCryptoTransform(mAes, rgbKey, mNonce, mCounter);
+        return new AesCounterModeCryptoTransform(mAes, key, iv, mCounter);
     }
 
 
-    public override ICryptoTransform CreateDecryptor(byte[] rgbKey, byte[]? iv)
-    {
-        return new CounterModeCryptoTransform(mAes, rgbKey, mNonce, mCounter);
-    }
-
-
+    /// <inheritdoc/>
     public override void GenerateKey()
     {
         mAes.GenerateKey();
     }
 
 
+    /// <inheritdoc/>
     public override void GenerateIV()
     {
         // IV not needed in Counter Mode
     }
+
+    #endregion
 }

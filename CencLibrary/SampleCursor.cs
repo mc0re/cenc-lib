@@ -8,16 +8,14 @@ internal class SampleCursor
     private PiffSampleTableBox mStbl;
     private int mSampleIndex;
     private int mChunkIndex;
-    private Stream mInput;
     private uint mSampleCount;
 
     public bool EndReached { get; private set; }
 
-    public SampleCursor(uint trackId, PiffSampleTableBox stbl, Stream input)
+    public SampleCursor(uint trackId, PiffSampleTableBox stbl)
     {
         mTrackId = trackId;
         mStbl = stbl;
-        mInput = input;
 
         mSampleCount =
             stbl.FirstOfType<PiffSampleSizeBox>()?.SampleCount ??

@@ -9,61 +9,25 @@ public class CencDecryptor
     public int Decrypt(Stream input, Stream output, byte[] key)
     {
         var rctx = new PiffReadContext();
-        var dctx = new CencDecryptionContext();
 
-        var inputFile = PiffFile.ParseButSkipData(input, rctx);
+        var inputFile = PiffFile.Parse(input, rctx);
         if (rctx.Messages.Any())
         {
             foreach (var msg in rctx.Messages)
                 Console.WriteLine(msg);
+            if (rctx.IsError) return -1;
         }
 
-        var moov = inputFile.GetSingleBox<PiffMovieBox>();
-        if (moov == null)
-            return dctx.AddError($"No '{PiffReader.GetBoxName<PiffMovieBox>()}' box in the file.");
-
-        var tracks = moov.ChildrenOfType<PiffTrackBox>();
-        if (tracks.Length == 0)
-            return dctx.AddError($"No '{PiffReader.GetBoxName<PiffTrackBox>()}' in the file.");
-
-        var decryptors = new List<CencTrackDecryptor>();
-        var cursors = new List<SampleCursor>();
-
-        foreach (var track in tracks)
+        var dctx = new CencDecryptionContext();
+        var fileInfo = new CencFileLevelInfo(inputFile, dctx, key);
+        if (dctx.Messages.Any())
         {
-            var stbl = track.FirstOfType<PIffTrackMediaInfoBox, PiffMediaInformationBox, PiffSampleTableBox>();
-            if (stbl == null)
-            {
-                dctx.AddWarning($"No '{PiffReader.GetBoxName<PiffSampleTableBox>()}' for track.");
-                continue;
-            }
-
-            var stsd = stbl.FirstOfType<PiffSampleDescriptionBox>();
-            if (stsd == null)
-            {
-                dctx.AddWarning($"No '{PiffReader.GetBoxName<PiffSampleDescriptionBox>()}' for track.");
-                continue;
-            }
-
-            var samples = stsd.ChildrenOfType<PiffSampleEntryBoxBase>();
-            if (!samples.Any())
-            {
-                dctx.AddWarning("No sample entries for track.");
-                continue;
-            }
-
-            var trackId = track.FirstOfType<PiffTrackHeaderBox>().TrackId;
-
-            // There is stsd.First<PiffTrackEncryptionBox>().DefaultKeyId to get the key ID
-            var decr = new CencTrackDecryptor(samples, trackId, key);
-            decryptors.Add(decr);
-            cursors.Add(new SampleCursor(trackId, stbl, input));
+            foreach (var msg in dctx.Messages)
+                Console.WriteLine(msg);
+            if (dctx.IsError) return -1;
         }
 
-        if (cursors.Any(c => !c.EndReached))
-            return dctx.AddError("External samples are not suppoted.");
-
-        foreach (var decr in decryptors)
+        foreach (var decr in fileInfo.Decryptors)
         {
             decr.ChangeFormat();
         }
@@ -72,9 +36,9 @@ public class CencDecryptor
         for (int boxIdx = 0; boxIdx < inputFile.Boxes.Count; boxIdx++)
         {
             var box = inputFile.Boxes[boxIdx];
-            if (box.StartOffset != (ulong) output.Position)
+            if (box.OriginalPosition != (ulong) output.Position)
             {
-                wctx.AddError($"Box {box.BoxType} started at {box.StartOffset}, now written at {output.Position}.");
+                wctx.AddError($"Box {box.BoxType} started at {box.OriginalPosition}, now written at {output.Position}.");
                 break;
             }
 
@@ -87,24 +51,48 @@ public class CencDecryptor
             var nextBox = inputFile.Boxes[boxIdx];
             if (nextBox is not PiffMediaDataBox mdat)
             {
-                wctx.AddError($"'{PiffReader.GetBoxName<PiffMediaDataBox>()}' expected, found '{box.BoxType}' at {box.StartOffset}.");
+                wctx.AddError($"'{PiffReader.GetBoxName<PiffMediaDataBox>()}' expected, found '{box.BoxType}' at {box.OriginalPosition}.");
                 continue;
             }
 
+            if (mdat.OriginalPosition != (ulong) output.Position)
+            {
+                wctx.AddError($"Box {mdat.BoxType} started at {mdat.OriginalPosition}, now written at {output.Position}.");
+                break;
+            }
+
+            PiffWriter.WriteBoxHeader(output, mdat.BoxType, mdat.OriginalSize);
+
+            // One of each per track fragment
             var handlers = new List<CencFragmentDecryptor>();
             var sampleTables = new List<CencSampleTable>();
 
             foreach (var traf in moof.ChildrenOfType<PiffTrackFragmentBox>())
             {
                 var truns = traf.ChildrenOfType<PiffTrackFragmentRunBox>();
-                var handler = new CencFragmentDecryptor(traf, truns, tracks, moov, decryptors, dctx);
+                var handler = new CencFragmentDecryptor(traf, truns, fileInfo.Tracks, fileInfo.Moov, fileInfo.Decryptors, dctx);
                 if (dctx.Messages.Any()) continue;
 
                 handlers.Add(handler);
-                sampleTables.Add(new CencSampleTable(moov, moof, traf, truns, handler.TrackId));
+                sampleTables.Add(new CencSampleTable(fileInfo.Moov, moof, traf, truns, handler.TrackId));
             }
 
-            PiffWriter.WriteBoxHeader(output, mdat, wctx);
+            for (int trafIdx = 0; trafIdx < sampleTables.Count; trafIdx++)
+            {
+                var sampleTable = sampleTables[trafIdx];
+                var handler = handlers[trafIdx];
+
+                for (int sampleIdx = 0; sampleIdx < sampleTable.SampleTable.Count; sampleIdx++)
+                {
+                    var sample = sampleTable.SampleTable[sampleIdx];
+
+                    input.Seek((long) sample.DataOffset, SeekOrigin.Begin);
+                    var encData = new byte[sample.Size];
+                    input.Read(encData, 0, encData.Length);
+
+                    handler.Decrypt(encData, output, sampleIdx);
+                }
+            }
         }
 
         if (wctx.Errors.Any())

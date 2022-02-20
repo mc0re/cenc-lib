@@ -2,15 +2,23 @@
 
 namespace CencLibrary;
 
-internal class CounterModeCryptoTransform : ICryptoTransform
+
+internal class AesCounterModeCryptoTransform : ICryptoTransform
 {
+    #region Fields
+
+    private const int IvLength = 8;
+    private const int CounterLength = 8;
+
     private readonly byte[] mNonceAndCounter;
     private readonly ICryptoTransform mCounterEncryptor;
     private readonly Queue<byte> mXorMask = new Queue<byte>();
     private readonly SymmetricAlgorithm mAes;
+    private readonly byte[] mCounter;
 
-    private ulong mCounter;
     private byte[] mCounterModeBlock;
+
+    #endregion
 
 
     public int InputBlockSize => mAes.BlockSize / 8;
@@ -19,15 +27,18 @@ internal class CounterModeCryptoTransform : ICryptoTransform
     public bool CanReuseTransform => false;
 
 
-    public CounterModeCryptoTransform(SymmetricAlgorithm symmetricAlgorithm, byte[] key, ulong nonce, ulong counter)
+    public AesCounterModeCryptoTransform(SymmetricAlgorithm symmetricAlgorithm, byte[] key, byte[]? iv, byte[] counter)
     {
-        if (key == null) throw new ArgumentNullException(nameof(key));
+        if (key is null) throw new ArgumentNullException(nameof(key));
+        if (iv is null) throw new ArgumentNullException(nameof(iv));
+        if (iv.Length != IvLength) throw new ArgumentException($"Must be {IvLength} bytes", nameof(iv));
+        if (counter.Length != CounterLength) throw new ArgumentException($"Must be {CounterLength} bytes", nameof(counter));
 
         mAes = symmetricAlgorithm ?? throw new ArgumentNullException(nameof(symmetricAlgorithm));
         mCounter = counter;
-        mNonceAndCounter = new byte[16];
-        BitConverter.TryWriteBytes(mNonceAndCounter, nonce);
-        BitConverter.TryWriteBytes(new Span<byte>(mNonceAndCounter, sizeof(ulong), sizeof(ulong)), counter);
+        mNonceAndCounter = new byte[IvLength + CounterLength];
+        Array.Copy(iv, mNonceAndCounter, IvLength);
+        Array.Copy(counter, 0, mNonceAndCounter, IvLength, CounterLength);
 
         var zeroIv = new byte[mAes.BlockSize / 8];
         mCounterEncryptor = symmetricAlgorithm.CreateEncryptor(key, zeroIv);
@@ -72,6 +83,7 @@ internal class CounterModeCryptoTransform : ICryptoTransform
 
         mCounterEncryptor.TransformBlock(mNonceAndCounter, 0, mNonceAndCounter.Length, mCounterModeBlock, 0);
         IncrementCounter();
+        Array.Copy(mCounter, 0, mNonceAndCounter, IvLength, CounterLength);
 
         foreach (var b in mCounterModeBlock)
         {
@@ -82,9 +94,20 @@ internal class CounterModeCryptoTransform : ICryptoTransform
 
     private void IncrementCounter()
     {
-        mCounter++;
-        var span = new Span<byte>(mNonceAndCounter, sizeof(ulong), sizeof(ulong));
-        BitConverter.TryWriteBytes(span, mCounter);
+        var byteIdx = mCounter.Length - 1;
+
+        while (byteIdx >= IvLength)
+        {
+            var b = mCounter[byteIdx];
+            if (b < 0xFF)
+            {
+                mCounter[byteIdx] = (byte) (b + 1);
+                break;
+            }
+
+            mCounter[byteIdx] = 0;
+            byteIdx--;
+        }
     }
 
 

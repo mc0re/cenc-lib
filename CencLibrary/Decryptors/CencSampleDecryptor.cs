@@ -1,97 +1,89 @@
-﻿using PiffLibrary;
-using PiffLibrary.Boxes;
+﻿using PiffLibrary.Boxes;
 
 namespace CencLibrary;
 
 
+/// <summary>
+/// Decrypts the subsamples of the given sample data.
+/// </summary>
 internal sealed class CencSampleDecryptor
 {
+    #region Fields
 
-    public PiffProtectionTrackEncryption Tenc { get; }
+    /// <summary>
+    /// Whether to set the IV back to the given value after decoding each sub-sample.
+    /// </summary>
+    private readonly bool mResetIv;
 
-    public PiffSampleEncryption Senc { get; }
+    private readonly ICencBlockCipher? mCipher;
 
-    public byte PerSampleIvSize { get; }
-
-    public byte IvSize { get; }
-
-    public bool ResetIv { get; }
-
-    public CencSingleSampleDecryptor SingleDecryptor { get; }
+    #endregion
 
 
-    public CencSampleDecryptor(
-        ProtectedSampleDescription sampleDescription, PiffTrackFragmentBox traf, byte[] trackKey, CencDecryptionContext ctx)
+    #region Init and clean-up
+
+    public CencSampleDecryptor(PiffEncryptionTypes cipherType, byte[] trackKey, bool resetIv)
     {
-        var tenc = sampleDescription.SchiBox.FirstOfType<PiffTrackEncryptionBox>()?.Data ??
-                   sampleDescription.SchiBox.ChildrenOfType<PiffExtensionBox>()
-                                     .FirstOrDefault(b => b.BoxId == PiffProtectionTrackEncryption.BoxId)?
-                                     .Track;
-        if (tenc is null)
+        ICencBlockCipherFactory factory = new CencDefaultCipherFactory();
+
+        switch (cipherType)
         {
-            ctx.AddError($"No '{PiffReader.GetBoxName<PiffTrackEncryptionBox>()}' for track.");
+            case PiffEncryptionTypes.NoEncryption:
+                mCipher = null;
+                break;
+
+            case PiffEncryptionTypes.AesCtr:
+                mCipher = factory.Create(cipherType, trackKey);
+                break;
+
+            default:
+                throw new NotImplementedException();
+        }
+
+        mResetIv = resetIv;
+    }
+
+    #endregion
+
+
+    #region API
+
+    public void Decrypt(byte[] encData, Stream output, byte[] iv, PiffSampleEncryptionSubSample[] subSamples)
+    {
+        if (mCipher is null)
+        {
+            output.Write(encData, 0, encData.Length);
             return;
         }
 
-        Tenc = tenc;
+        var position = 0;
+        mCipher.SetIv(iv);
 
-        var senc = traf.FirstOfType<PiffSampleEncryptionBox>()?.Data ??
-                   traf.ChildrenOfType<PiffExtensionBox>()
-                       .FirstOrDefault(b => b.BoxId == PiffSampleEncryption.BoxId)?
-                       .Sample;
-        if (senc is null)
+        foreach (var subSample in subSamples)
         {
-            ctx.AddError($"No '{PiffReader.GetBoxName<PiffSampleEncryptionBox>()}' for track.");
-            return;
-        }
-
-        Senc = senc;
-
-        PiffEncryptionTypes cipherType;
-
-        if ((senc.ParentFlags & PiffSampleEncryption.OverrideTrack) != 0)
-        {
-            cipherType = senc.Algorithm.AlgorithmId;
-            PerSampleIvSize = senc.Algorithm.InitVectorSize;
-        }
-        else
-        {
-            switch (sampleDescription.SchemeType)
+            if (subSample.ClearDataSize > 0)
             {
-                case "piff":
-                    cipherType = tenc.DefaultAlgorithmId;
-                    break;
-
-                case "cenc" or "cens":
-                    cipherType = PiffEncryptionTypes.AesCtr;
-                    break;
-
-                case "cbc1":
-                    cipherType = PiffEncryptionTypes.AesCbc;
-                    break;
-
-                case "cbcs":
-                    cipherType = PiffEncryptionTypes.AesCbc;
-                    ResetIv = true;
-                    break;
-
-                default:
-                    ctx.AddError($"Encryption '{sampleDescription.SchemeType}' is not supported.");
-                    return;
+                output.Write(encData, 0, subSample.ClearDataSize);
+                position += subSample.ClearDataSize;
             }
 
-            PerSampleIvSize = tenc.DefaultPerSampleIvSize;
+            if (subSample.EncryptedDataSize > 0)
+            {
+                if (mResetIv)
+                {
+                    mCipher.SetIv(iv);
+                }
 
-            if (tenc.DefaultAlgorithmId == PiffEncryptionTypes.NoEncryption)
-                cipherType = PiffEncryptionTypes.NoEncryption;
+                mCipher.Decode(encData, position, subSample.EncryptedDataSize, output);
+                position += (int) subSample.EncryptedDataSize;
+            }
         }
 
-        SingleDecryptor = new CencSingleSampleDecryptor(cipherType, trackKey);
-
-        IvSize = PerSampleIvSize > 0 ? PerSampleIvSize : Tenc.ConstantInitVectorSize;
-        if (IvSize == 0)
+        if (position < encData.Length)
         {
-            ctx.AddError($"IV size is not defined.");
+            output.Write(encData, position, encData.Length - position);
         }
     }
+
+    #endregion
 }

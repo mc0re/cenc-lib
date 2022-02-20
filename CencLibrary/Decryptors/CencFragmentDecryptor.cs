@@ -4,17 +4,24 @@ using PiffLibrary.Boxes;
 namespace CencLibrary;
 
 
+/// <summary>
+/// One for each <see cref="PiffTrackFragmentBox"/> in each <see cref="PiffMovieFragmentBox"/>.
+/// </summary>
 internal class CencFragmentDecryptor
 {
-    private readonly CencSampleDecryptor mSampleDecryptor;
+    #region Fields
+
+    private readonly CencFragmentAlgorithm mSampleDecryptor;
 
     private readonly PiffSampleAuxiliaryOffsetBox? mSaio;
 
     private readonly PiffSampleAuxiliaryInformationBox? mSaiz;
 
+    #endregion
+
 
     #region Properties
-    
+
     /// <summary>
     /// Track ID for which this decryptor keeps the information.
     /// </summary>
@@ -29,11 +36,13 @@ internal class CencFragmentDecryptor
     #endregion
 
 
+    #region Init and clean-up
+
     public CencFragmentDecryptor(
         PiffTrackFragmentBox traf,
         PiffTrackFragmentRunBox[] truns, PiffTrackBox[] tracks,
         PiffMovieBox moov,
-        List<CencTrackDecryptor> decryptors, CencDecryptionContext ctx)
+        IEnumerable<CencTrackDecryptor> decryptors, CencDecryptionContext ctx)
     {
         var tfhd = traf.FirstOfType<PiffTrackFragmentHeaderBox>();
         if (tfhd is null)
@@ -76,7 +85,7 @@ internal class CencFragmentDecryptor
             return;
         }
 
-        mSampleDecryptor = new CencSampleDecryptor(sampleDescription, traf, decr.TrackKey, ctx);
+        mSampleDecryptor = new CencFragmentAlgorithm(sampleDescription, traf, decr.TrackKey, ctx);
         if (ctx.Messages.Any()) return;
 
         mSaio = traf.ChildrenOfType<PiffSampleAuxiliaryOffsetBox>()
@@ -96,15 +105,17 @@ internal class CencFragmentDecryptor
         }
 
         SampleCount = truns.Sum(t => t.SampleCount);
-
-        var ivArray = new byte[mSampleDecryptor.IvSize * SampleCount];
-
-        for (var trunIdx = 0; trunIdx < truns.Length; trunIdx++)
-        {
-            if (mSampleDecryptor.PerSampleIvSize > 0)
-                Array.Copy(mSampleDecryptor.Senc.Items[trunIdx].InitVector, 0, ivArray, trunIdx * mSampleDecryptor.IvSize, mSampleDecryptor.IvSize);
-            else
-                Array.Copy(mSampleDecryptor.Tenc.ConstantInitVector, 0, ivArray, trunIdx * mSampleDecryptor.IvSize, mSampleDecryptor.IvSize);
-        }
     }
+
+    #endregion
+
+
+    #region API
+
+    public void Decrypt(byte[] encData, Stream output, int sampleIdx)
+    {
+        mSampleDecryptor.Decrypt(encData, output, sampleIdx);
+    }
+
+    #endregion
 }

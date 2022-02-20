@@ -28,7 +28,7 @@ internal class CencSampleTable
         var tfhd = traf.FirstOfType<PiffTrackFragmentHeaderBox>();
         BaseOffset = (tfhd.Flags & PiffTrackFragmentHeaderBox.FlagsBaseOffsetPresent) != 0
             ? tfhd.BaseDataOffset
-            : moof.StartOffset;
+            : moof.OriginalPosition;
 
         var descriptionIndex =
             (tfhd.Flags & PiffTrackFragmentHeaderBox.FlagsDescriptionIndexPresent) != 0 ? tfhd.SampleDescriptionIndex :
@@ -51,7 +51,7 @@ internal class CencSampleTable
             var dataOffset = (ulong) ((long) BaseOffset + trun.DataOffset);
 
             // MS hack
-            if (dataOffset == moof.StartOffset)
+            if (dataOffset == moof.OriginalPosition)
             {
                 //dataOffset = mdat_body_offset;
             }

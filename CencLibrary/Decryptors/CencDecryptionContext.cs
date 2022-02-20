@@ -3,12 +3,14 @@
     public class CencDecryptionContext
     {
         public IList<string> Messages { get; } = new List<string>();
-
         
-        internal int AddError(string message)
+        public bool IsError { get; private set; }
+
+
+        internal void AddError(string message)
         {
             Messages.Add(message);
-            return -1;
+            IsError = true;
         }
 
 
