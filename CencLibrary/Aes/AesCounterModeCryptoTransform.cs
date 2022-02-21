@@ -94,9 +94,7 @@ internal class AesCounterModeCryptoTransform : ICryptoTransform
 
     private void IncrementCounter()
     {
-        var byteIdx = mCounter.Length - 1;
-
-        while (byteIdx >= IvLength)
+        for (var byteIdx = mCounter.Length - 1; byteIdx >= 0; byteIdx--)
         {
             var b = mCounter[byteIdx];
             if (b < 0xFF)
@@ -106,7 +104,6 @@ internal class AesCounterModeCryptoTransform : ICryptoTransform
             }
 
             mCounter[byteIdx] = 0;
-            byteIdx--;
         }
     }
 
