@@ -56,8 +56,22 @@ internal sealed class CencSampleDecryptor
             return;
         }
 
-        var position = 0;
         mCipher.SetIv(iv);
+
+        if (subSamples.Any())
+            DecryptSubSamples(encData, output, iv, subSamples);
+        else
+            DecryptWholeSample(encData, output);
+    }
+
+    #endregion
+
+
+    #region Utility
+
+    private void DecryptSubSamples(byte[] encData, Stream output, byte[] iv, PiffSampleEncryptionSubSample[] subSamples)
+    {
+        var position = 0;
 
         foreach (var subSample in subSamples)
         {
@@ -83,6 +97,12 @@ internal sealed class CencSampleDecryptor
         {
             output.Write(encData, position, encData.Length - position);
         }
+    }
+
+
+    private void DecryptWholeSample(byte[] encData, Stream output)
+    {
+        mCipher.Decode(encData, 0, (uint) encData.Length, output);        
     }
 
     #endregion
